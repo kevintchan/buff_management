@@ -254,19 +254,10 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
     } else if (BufferReplacementPolicy == POLICY_LRU) {
 
       resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdxLRU);
-      if (resultIndex != END_OF_LIST) {
-	// KCHAN(TODO): update list
-	updateListLRU(resultIndex);
-      }
 
     } else if (BufferReplacementPolicy == POLICY_MRU) {
 
       resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdxMRU);
-      if (resultIndex != END_OF_LIST) {
-	// KCHAN(TODO): update list
-	updateListMRU(resultIndex);
-      }
-
 
     } else if (BufferReplacementPolicy == POLICY_2Q) {
 
@@ -276,19 +267,16 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
       if (StrategyControl->fifoSize >=  threshold) {
 	// pull from A1(FIFO) if its above the threshold
 	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdxFIFO);
-	// KCHAN(TODO): update list
       }
 
       if (resultIndex == END_OF_LIST) {
 	// pull from AM(LRU)
 	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdxLRU);
-	// KCHAN(TODO): update list
       }
 
       if (resultIndex == END_OF_LIST) {
 	// pull from A1(FIFO) again
 	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdxFIFO);
-	// KCHAN(TODO): update list
       }
 
     } else  {
@@ -370,6 +358,8 @@ BufferUnpinned(int bufIndex)
    * StrategyControl global variable from inside this function.
    * This function was added by the GSIs.
    */
+
+  
 
   LWLockRelease(BufFreelistLock);
 }
