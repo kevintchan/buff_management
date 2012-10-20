@@ -63,17 +63,17 @@ typedef struct
    */
   
   // for Q2, A1, FIFO Queue
-  int firstFIFOBuffer;
-  int lastFIFOBuffer;
+  int headBufIdxFIFO;
+  int tailBufIdxFIFO;
   int fifoSize;
 
   // for Q2, AM, LRU Queue
-  int firstLRUBuffer;
-  int lastLRUBuffer;
-  
+  int headBufIdxLRU;
+  int tailBufIdxLRU;
+
   // for MRU Queue
-  int firstMRUBuffer;
-  int lastMRUBuffer;
+  int headBufIdxMRU;
+  int tailBufIdxMRU;
 
 } BufferStrategyControl;
 
@@ -120,6 +120,10 @@ static void AddBufferToRing(BufferAccessStrategy strategy,
 			    volatile BufferDesc *buf);
 static int getUnpinnedBufIdxFromLinkedList(int listStartIdx);
 
+static void updateListFIFO(int leastRecentlyUsedIdx);
+static void updateListLRU(int leastRecentlyUsedIdx);
+static void updateListMRU(int leastRecentlyUsedIdx);
+
 
 /*
  * StrategyGetBuffer
@@ -138,7 +142,6 @@ static int getUnpinnedBufIdxFromLinkedList(int listStartIdx);
  *	might awaken other processes, and it would be bad to do the associated
  *	kernel calls while holding the buffer header spinlock.
  */
-
 
 volatile BufferDesc *
 StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
@@ -250,11 +253,20 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
       }
     } else if (BufferReplacementPolicy == POLICY_LRU) {
 
-      resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->firstLRUBuffer);
+      resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdxLRU);
+      if (resultIndex != END_OF_LIST) {
+	// KCHAN(TODO): update list
+	updateListLRU(resultIndex);
+      }
 
     } else if (BufferReplacementPolicy == POLICY_MRU) {
 
-      resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->firstMRUBuffer);
+      resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdxMRU);
+      if (resultIndex != END_OF_LIST) {
+	// KCHAN(TODO): update list
+	updateListMRU(resultIndex);
+      }
+
 
     } else if (BufferReplacementPolicy == POLICY_2Q) {
 
@@ -263,17 +275,20 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
       const int threshold = floor(NBuffers/2);
       if (StrategyControl->fifoSize >=  threshold) {
 	// pull from A1(FIFO) if its above the threshold
-	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->firstFIFOBuffer);
+	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdxFIFO);
+	// KCHAN(TODO): update list
       }
 
       if (resultIndex == END_OF_LIST) {
 	// pull from AM(LRU)
-	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->firstLRUBuffer);
+	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdxLRU);
+	// KCHAN(TODO): update list
       }
 
       if (resultIndex == END_OF_LIST) {
 	// pull from A1(FIFO) again
-	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->firstFIFOBuffer);
+	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdxFIFO);
+	// KCHAN(TODO): update list
       }
 
     } else  {
@@ -295,13 +310,12 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
 }
 
 /*
- * KCHAN: returns index of first unpinned buffer in the FIFO queue
+ * KCHAN: returns index of first unpinned buffer in the linked list
  *        while also holding its header spinlock
  */
-int
-getUnpinnedBufIdxFromLinkedList(int firstFifoBufferIdx)
+int getUnpinnedBufIdxFromLinkedList(int headBufIdx)
 {
-  volatile int bufIndex = firstFifoBufferIdx;
+  volatile int bufIndex = headBufIdx;
   volatile BufferDesc *buf;
   while (bufIndex != END_OF_LIST) {
     buf = &BufferDescriptors[bufIndex];
@@ -315,6 +329,26 @@ getUnpinnedBufIdxFromLinkedList(int firstFifoBufferIdx)
     bufIndex = buf->nextBuf;
   }
   return END_OF_LIST;
+}
+
+void updateListFIFO(int leastRecentlyUsedIdx)
+{
+
+
+}
+
+void updateListLRU(int leastRecentlyUsedIdx)
+{
+
+
+
+}
+
+void
+updateListMRU(int leastRecentlyUsedIdx)
+{
+
+
 }
 
 /*
@@ -485,14 +519,15 @@ StrategyInitialize(bool init)
       // initialize first/last of LRU, MRU, Q2 LinkedLists
       // we could switch on Strategy
 
-      StrategyControl->firstFIFOBuffer = END_OF_LIST;
-      StrategyControl->lastFIFOBuffer = END_OF_LIST;
+      StrategyControl->headBufIdxFIFO = END_OF_LIST;
+      StrategyControl->tailBufIdxFIFO = END_OF_LIST;
 
-      StrategyControl->firstLRUBuffer = END_OF_LIST;
-      StrategyControl->lastLRUBuffer = END_OF_LIST;
-      
-      StrategyControl->firstMRUBuffer = END_OF_LIST;
-      StrategyControl->lastMRUBuffer = END_OF_LIST;
+      StrategyControl->headBufIdxLRU = END_OF_LIST;
+      StrategyControl->tailBufIdxLRU = END_OF_LIST;
+
+      StrategyControl->headBufIdxMRU = END_OF_LIST;
+      StrategyControl->tailBufIdxMRU = END_OF_LIST;
+
     }
   else
     Assert(!init);

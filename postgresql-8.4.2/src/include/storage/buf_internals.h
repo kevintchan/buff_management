@@ -144,9 +144,10 @@ typedef struct sbufdesc
  LWLockId io_in_progress_lock; /* to wait for I/O to complete */
  LWLockId content_lock; /* to lock access to buffer contents */
 
- /* CS186 TODO: Add any data you need to manage in order to implement
-  * your buffer replacement strategies here.
-  */
+  /*
+   * CS186 TODO: Add any data you need to manage in order to implement
+   * your buffer replacement strategies here.
+   */
 
   /* 
    * KCHAN: these should all be protected by their own locks but
