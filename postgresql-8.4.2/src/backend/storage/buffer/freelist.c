@@ -32,30 +32,30 @@ int BufferReplacementPolicy;
  */
 typedef struct
 {
-	/* Control information for the clock-based replacement policy */
+  /* Control information for the clock-based replacement policy */
 
-	/* Clock sweep hand: index of next buffer to consider grabbing */
-	int			nextVictimBuffer;
+  /* Clock sweep hand: index of next buffer to consider grabbing */
+  int nextVictimBuffer;
 
-	int			firstFreeBuffer;	/* Head of list of unused buffers */
-	int			lastFreeBuffer; /* Tail of list of unused buffers */
+  int firstFreeBuffer;	/* Head of list of unused buffers */
+  int lastFreeBuffer; /* Tail of list of unused buffers */
 
-	/*
-	 * NOTE: lastFreeBuffer is undefined when firstFreeBuffer is -1 (that is,
-	 * when the list is empty)
-	 */
+  /*
+   * NOTE: lastFreeBuffer is undefined when firstFreeBuffer is -1 (that is,
+   * when the list is empty)
+   */
 
-	/*
-	 * Statistics.	These counters should be wide enough that they can't
-	 * overflow during a single bgwriter cycle.
-	 */
-	uint32		completePasses; /* Complete cycles of the clock sweep */
-	uint32		numBufferAllocs;	/* Buffers allocated since last reset */
+  /*
+   * Statistics.	These counters should be wide enough that they can't
+   * overflow during a single bgwriter cycle.
+   */
+  uint32 completePasses; /* Complete cycles of the clock sweep */
+  uint32 numBufferAllocs;	/* Buffers allocated since last reset */
 
-	/*
-	 * CS186 TODO: Add any data you need to manage in order to implement
-	 * your buffer replacement strategies here.
-	 */
+  /*
+   * CS186 TODO: Add any data you need to manage in order to implement
+   * your buffer replacement strategies here.
+   */
 
 } BufferStrategyControl;
 
@@ -69,37 +69,37 @@ static BufferStrategyControl *StrategyControl = NULL;
  */
 typedef struct BufferAccessStrategyData
 {
-	/* Overall strategy type */
-	BufferAccessStrategyType btype;
-	/* Number of elements in buffers[] array */
-	int			ring_size;
+  /* Overall strategy type */
+  BufferAccessStrategyType btype;
+  /* Number of elements in buffers[] array */
+  int ring_size;
 
-	/*
-	 * Index of the "current" slot in the ring, ie, the one most recently
-	 * returned by GetBufferFromRing.
-	 */
-	int			current;
+  /*
+   * Index of the "current" slot in the ring, ie, the one most recently
+   * returned by GetBufferFromRing.
+   */
+  int current;
 
-	/*
-	 * True if the buffer just returned by StrategyGetBuffer had been in the
-	 * ring already.
-	 */
-	bool		current_was_in_ring;
+  /*
+   * True if the buffer just returned by StrategyGetBuffer had been in the
+   * ring already.
+   */
+  bool current_was_in_ring;
 
-	/*
-	 * Array of buffer numbers.	 InvalidBuffer (that is, zero) indicates we
-	 * have not yet selected a buffer for this ring slot.  For allocation
-	 * simplicity this is palloc'd together with the fixed fields of the
-	 * struct.
-	 */
-	Buffer		buffers[1];		/* VARIABLE SIZE ARRAY */
+  /*
+   * Array of buffer numbers.	 InvalidBuffer (that is, zero) indicates we
+   * have not yet selected a buffer for this ring slot.  For allocation
+   * simplicity this is palloc'd together with the fixed fields of the
+   * struct.
+   */
+  Buffer buffers[1];		/* VARIABLE SIZE ARRAY */
 } BufferAccessStrategyData;
 
 
 /* Prototypes for internal functions */
 static volatile BufferDesc *GetBufferFromRing(BufferAccessStrategy strategy);
 static void AddBufferToRing(BufferAccessStrategy strategy,
-				volatile BufferDesc *buf);
+			    volatile BufferDesc *buf);
 
 
 /*
@@ -115,143 +115,145 @@ static void AddBufferToRing(BufferAccessStrategy strategy,
  *	return the buffer with the buffer header spinlock still held.  If
  *	*lock_held is set on exit, we have returned with the BufFreelistLock
  *	still held, as well; the caller must release that lock once the spinlock
- *	is dropped.	 We do it that way because releasing the BufFreelistLock
+ *      is dropped. We do it that way because releasing the BufFreelistLock
  *	might awaken other processes, and it would be bad to do the associated
  *	kernel calls while holding the buffer header spinlock.
  */
+
+/*
+ * CS186 TODO: Add code here to implement the LRU, MRU and 2Q buffer
+ * replacement policies. Once you've selected a buffer to
+ * evict, assign its index in the BufferDescriptors array to
+ * "resultIndex". You can model your code on the CLOCK code
+ * above.
+ */
+
 volatile BufferDesc *
 StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
 {
-	volatile BufferDesc *buf;
-	volatile int bufIndex = -1;
-	volatile int resultIndex = -1;
-	int			trycounter;
+  volatile BufferDesc *buf;
+  volatile int bufIndex = -1;
+  volatile int resultIndex = -1;
+  int trycounter;
 
-	/* Lock the freelist */
-	*lock_held = true;
-	LWLockAcquire(BufFreelistLock, LW_EXCLUSIVE);
+  /* Lock the freelist */
+  *lock_held = true;
+  LWLockAcquire(BufFreelistLock, LW_EXCLUSIVE);
 
-	/*
-	 * We count buffer allocation requests so that the bgwriter can estimate
-	 * the rate of buffer consumption.
-	 */
-	StrategyControl->numBufferAllocs++;
+  /*
+   * We count buffer allocation requests so that the bgwriter can estimate
+   * the rate of buffer consumption.
+   */
+  StrategyControl->numBufferAllocs++;
 
-	/*
-	 * Try to get a buffer from the freelist.  Note that the freeNext fields
-	 * are considered to be protected by the BufFreelistLock not the
-	 * individual buffer spinlocks, so it's OK to manipulate them without
-	 * holding the spinlock.
-	 */
-	while (StrategyControl->firstFreeBuffer >= 0)
+  /*
+   * Try to get a buffer from the freelist.  Note that the freeNext fields
+   * are considered to be protected by the BufFreelistLock not the
+   * individual buffer spinlocks, so it's OK to manipulate them without
+   * holding the spinlock.
+   */
+  while (StrategyControl->firstFreeBuffer >= 0)
+    {
+      bufIndex = StrategyControl->firstFreeBuffer;
+      buf = &BufferDescriptors[bufIndex];
+      Assert(buf->freeNext != FREENEXT_NOT_IN_LIST);
+
+      /* Unconditionally remove buffer from freelist */
+      StrategyControl->firstFreeBuffer = buf->freeNext;
+      buf->freeNext = FREENEXT_NOT_IN_LIST;
+
+      /*
+       * If the buffer is pinned or has a nonzero usage_count, we cannot use
+       * it; discard it and retry.  (This can only happen if VACUUM put a
+       * valid buffer in the freelist and then someone else used it before
+       * we got to it.  It's probably impossible altogether as of 8.3, but
+       * we'd better check anyway.)
+       */
+      LockBufHdr(buf);
+      if (buf->refcount == 0 && buf->usage_count == 0)
 	{
-		bufIndex = StrategyControl->firstFreeBuffer;
-		buf = &BufferDescriptors[bufIndex];
-		Assert(buf->freeNext != FREENEXT_NOT_IN_LIST);
+	  resultIndex = bufIndex;
+	  break;
+	}
+      UnlockBufHdr(buf);
+    }
 
-		/* Unconditionally remove buffer from freelist */
-		StrategyControl->firstFreeBuffer = buf->freeNext;
-		buf->freeNext = FREENEXT_NOT_IN_LIST;
+  /*
+   * Nothing on the freelist, so use the buffer replacement policy
+   * to select a buffer to evict.
+   */
+  if (resultIndex == -1) {
+    if (BufferReplacementPolicy == POLICY_CLOCK) {
+      /* Run the "clock sweep" algorithm */
+      trycounter = NBuffers;
+      for (;;) {
+	bufIndex = StrategyControl->nextVictimBuffer;
+	buf = &BufferDescriptors[bufIndex];
 
-		/*
-		 * If the buffer is pinned or has a nonzero usage_count, we cannot use
-		 * it; discard it and retry.  (This can only happen if VACUUM put a
-		 * valid buffer in the freelist and then someone else used it before
-		 * we got to it.  It's probably impossible altogether as of 8.3, but
-		 * we'd better check anyway.)
-		 */
-		LockBufHdr(buf);
-		if (buf->refcount == 0 && buf->usage_count == 0)
-		{
-			resultIndex = bufIndex;
-			break;
-		}
-		UnlockBufHdr(buf);
+	/*
+	 * If the clock sweep hand has reached the end of the
+	 * buffer pool, start back at the beginning.
+	 */
+	if (++StrategyControl->nextVictimBuffer >= NBuffers) {
+	  StrategyControl->nextVictimBuffer = 0;
+	  StrategyControl->completePasses++;
 	}
 
 	/*
-	 * Nothing on the freelist, so use the buffer replacement policy
-	 * to select a buffer to evict.
+	 * If the buffer is pinned or has a nonzero usage_count, we cannot use
+	 * it; decrement the usage_count (unless pinned) and keep scanning.
 	 */
-	if (resultIndex == -1)
-	{
-		if (BufferReplacementPolicy == POLICY_CLOCK)
-		{
-			/* Run the "clock sweep" algorithm */
-			trycounter = NBuffers;
-			for (;;)
-			{
-				bufIndex = StrategyControl->nextVictimBuffer;
-				buf = &BufferDescriptors[bufIndex];
+	LockBufHdr(buf);
+	if (buf->refcount == 0) {
+	  if (buf->usage_count > 0) {
+	    buf->usage_count--;
+	    trycounter = NBuffers;
+	  } else {
+	    /* Found a usable buffer */
+	    resultIndex = bufIndex;
+	    break;
+	  }
+	} else if (--trycounter == 0) {
+	  /*
+	   * We've scanned all the buffers without making any state changes,
+	   * so all the buffers are pinned (or were when we looked at them).
+	   * We could hope that someone will free one eventually, but it's
+	   * probably better to fail than to risk getting stuck in an
+	   * infinite loop.
+	   */
+	  UnlockBufHdr(buf);
+	  elog(ERROR, "no unpinned buffers available");
+	}
+	UnlockBufHdr(buf);
+      }
+    } else if (BufferReplacementPolicy == POLICY_LRU) {
+      elog(ERROR, "LRU unimplemented");
 
-				/*
-				 * If the clock sweep hand has reached the end of the
-				 * buffer pool, start back at the beginning.
-				 */
-				if (++StrategyControl->nextVictimBuffer >= NBuffers)
-				{
-					StrategyControl->nextVictimBuffer = 0;
-					StrategyControl->completePasses++;
-				}
+    } else if (BufferReplacementPolicy == POLICY_MRU) {
+      elog(ERROR, "MRU unimplemented");
 
-				/*
-				 * If the buffer is pinned or has a nonzero usage_count, we cannot use
-				 * it; decrement the usage_count (unless pinned) and keep scanning.
-				 */
-				LockBufHdr(buf);
-				if (buf->refcount == 0)
-				{
-					if (buf->usage_count > 0)
-					{
-						buf->usage_count--;
-						trycounter = NBuffers;
-					}
-					else
-					{
-						/* Found a usable buffer */
-						resultIndex = bufIndex;
-						break;
-					}
-				}
-				else if (--trycounter == 0)
-				{
-					/*
-					 * We've scanned all the buffers without making any state changes,
-					 * so all the buffers are pinned (or were when we looked at them).
-					 * We could hope that someone will free one eventually, but it's
-					 * probably better to fail than to risk getting stuck in an
-					 * infinite loop.
-					 */
-					UnlockBufHdr(buf);
-					elog(ERROR, "no unpinned buffers available");
-				}
-				UnlockBufHdr(buf);
-			}
-		}
-		/*
-		 * CS186 TODO: Add code here to implement the LRU, MRU and 2Q buffer
-		 * replacement policies. Once you've selected a buffer to
-		 * evict, assign its index in the BufferDescriptors array to
-		 * "resultIndex". You can model your code on the CLOCK code
-		 * above.
-		 */
-		else if (BufferReplacementPolicy == POLICY_LRU)
-		{
-			elog(ERROR, "LRU unimplemented");
-		}
-		else if (BufferReplacementPolicy == POLICY_MRU)
-		{
-			elog(ERROR, "MRU unimplemented");
-		}
-		else if (BufferReplacementPolicy == POLICY_2Q)
-		{
-			elog(ERROR, "2Q unimplemented");
-		}
-		else
-		{
-			elog(ERROR, "invalid buffer pool replacement policy %d", BufferReplacementPolicy);
-		}
+    } else if (BufferReplacementPolicy == POLICY_2Q) {
+      // KCHAN
+      // A1 FIFO queue
+      // A1 queue.size
 
+      // AM LRU queue
+      // AM queue.size
+      /*      int THRESHOLD = floor(NBuffers/2);
+
+      if (a1_queue->size > THRESHOLD) {
+	resultIndex = pop(a1_queue);
+      } else {
+	resultIndex = pop(am_queue);
+      }
+      */
+	  
+      elog(ERROR, "2Q unimplemented");
+    } else  {
+      elog(ERROR, "invalid buffer pool replacement policy %d", BufferReplacementPolicy);
+    }
+
+    
     /*
      * CS186 Grading LOG - DON'T TOUCH
      * Don't output logs starting with "GRADING" by yourself; they are for grading purposes only.
@@ -259,10 +261,10 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
     elog(LOG, "GRADING: EVICT %2d", resultIndex);  
   }
 
-	if (resultIndex == -1)
-		elog(ERROR, "reached end of StrategyGetBuffer() without selecting a buffer");
+  if (resultIndex == -1)
+    elog(ERROR, "reached end of StrategyGetBuffer() without selecting a buffer");
 	
-	return &BufferDescriptors[resultIndex];
+  return &BufferDescriptors[resultIndex];
 }
 
 /*
@@ -272,20 +274,20 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
 void
 BufferUnpinned(int bufIndex)
 {
-	volatile BufferDesc *buf = &BufferDescriptors[bufIndex];
+  volatile BufferDesc *buf = &BufferDescriptors[bufIndex];
 
-	if (!LWLockConditionalAcquire(BufFreelistLock, LW_EXCLUSIVE))
-		return;
+  if (!LWLockConditionalAcquire(BufFreelistLock, LW_EXCLUSIVE))
+    return;
 
-	/*
-	 * CS186 TODO: When this function is called, the specified buffer has
-	 * just been unpinned. That means you can start to manage this buffer 
+  /*
+   * CS186 TODO: When this function is called, the specified buffer has
+   * just been unpinned. That means you can start to manage this buffer 
    * using your buffer replacement policy. You can access the 
    * StrategyControl global variable from inside this function.
    * This function was added by the GSIs.
-	 */
+   */
 
-	LWLockRelease(BufFreelistLock);
+  LWLockRelease(BufFreelistLock);
 }
 
 
@@ -295,21 +297,21 @@ BufferUnpinned(int bufIndex)
 void
 StrategyFreeBuffer(volatile BufferDesc *buf)
 {
-	LWLockAcquire(BufFreelistLock, LW_EXCLUSIVE);
+  LWLockAcquire(BufFreelistLock, LW_EXCLUSIVE);
 
-	/*
-	 * It is possible that we are told to put something in the freelist that
-	 * is already in it; don't screw up the list if so.
-	 */
-	if (buf->freeNext == FREENEXT_NOT_IN_LIST)
-	{
-		buf->freeNext = StrategyControl->firstFreeBuffer;
-		if (buf->freeNext < 0)
-			StrategyControl->lastFreeBuffer = buf->buf_id;
-		StrategyControl->firstFreeBuffer = buf->buf_id;
-	}
+  /*
+   * It is possible that we are told to put something in the freelist that
+   * is already in it; don't screw up the list if so.
+   */
+  if (buf->freeNext == FREENEXT_NOT_IN_LIST)
+    {
+      buf->freeNext = StrategyControl->firstFreeBuffer;
+      if (buf->freeNext < 0)
+	StrategyControl->lastFreeBuffer = buf->buf_id;
+      StrategyControl->firstFreeBuffer = buf->buf_id;
+    }
 
-	LWLockRelease(BufFreelistLock);
+  LWLockRelease(BufFreelistLock);
 }
 
 /*
@@ -326,19 +328,19 @@ StrategyFreeBuffer(volatile BufferDesc *buf)
 int
 StrategySyncStart(uint32 *complete_passes, uint32 *num_buf_alloc)
 {
-	int			result;
+  int			result;
 
-	LWLockAcquire(BufFreelistLock, LW_EXCLUSIVE);
-	result = StrategyControl->nextVictimBuffer;
-	if (complete_passes)
-		*complete_passes = StrategyControl->completePasses;
-	if (num_buf_alloc)
-	{
-		*num_buf_alloc = StrategyControl->numBufferAllocs;
-		StrategyControl->numBufferAllocs = 0;
-	}
-	LWLockRelease(BufFreelistLock);
-	return result;
+  LWLockAcquire(BufFreelistLock, LW_EXCLUSIVE);
+  result = StrategyControl->nextVictimBuffer;
+  if (complete_passes)
+    *complete_passes = StrategyControl->completePasses;
+  if (num_buf_alloc)
+    {
+      *num_buf_alloc = StrategyControl->numBufferAllocs;
+      StrategyControl->numBufferAllocs = 0;
+    }
+  LWLockRelease(BufFreelistLock);
+  return result;
 }
 
 
@@ -353,15 +355,15 @@ StrategySyncStart(uint32 *complete_passes, uint32 *num_buf_alloc)
 Size
 StrategyShmemSize(void)
 {
-	Size		size = 0;
+  Size		size = 0;
 
-	/* size of lookup hash table ... see comment in StrategyInitialize */
-	size = add_size(size, BufTableShmemSize(NBuffers + NUM_BUFFER_PARTITIONS));
+  /* size of lookup hash table ... see comment in StrategyInitialize */
+  size = add_size(size, BufTableShmemSize(NBuffers + NUM_BUFFER_PARTITIONS));
 
-	/* size of the shared replacement strategy control block */
-	size = add_size(size, MAXALIGN(sizeof(BufferStrategyControl)));
+  /* size of the shared replacement strategy control block */
+  size = add_size(size, MAXALIGN(sizeof(BufferStrategyControl)));
 
-	return size;
+  return size;
 }
 
 /*
@@ -374,53 +376,53 @@ StrategyShmemSize(void)
 void
 StrategyInitialize(bool init)
 {
-	bool		found;
+  bool		found;
 
-	/*
-	 * Initialize the shared buffer lookup hashtable.
-	 *
-	 * Since we can't tolerate running out of lookup table entries, we must be
-	 * sure to specify an adequate table size here.	 The maximum steady-state
-	 * usage is of course NBuffers entries, but BufferAlloc() tries to insert
-	 * a new entry before deleting the old.	 In principle this could be
-	 * happening in each partition concurrently, so we could need as many as
-	 * NBuffers + NUM_BUFFER_PARTITIONS entries.
-	 */
-	InitBufTable(NBuffers + NUM_BUFFER_PARTITIONS);
+  /*
+   * Initialize the shared buffer lookup hashtable.
+   *
+   * Since we can't tolerate running out of lookup table entries, we must be
+   * sure to specify an adequate table size here.	 The maximum steady-state
+   * usage is of course NBuffers entries, but BufferAlloc() tries to insert
+   * a new entry before deleting the old.	 In principle this could be
+   * happening in each partition concurrently, so we could need as many as
+   * NBuffers + NUM_BUFFER_PARTITIONS entries.
+   */
+  InitBufTable(NBuffers + NUM_BUFFER_PARTITIONS);
 
-	/*
-	 * Get or create the shared strategy control block
-	 */
-	StrategyControl = (BufferStrategyControl *)
-		ShmemInitStruct("Buffer Strategy Status",
-						sizeof(BufferStrategyControl),
-						&found);
+  /*
+   * Get or create the shared strategy control block
+   */
+  StrategyControl = (BufferStrategyControl *)
+    ShmemInitStruct("Buffer Strategy Status",
+		    sizeof(BufferStrategyControl),
+		    &found);
 
-	if (!found)
-	{
-		/*
-		 * Only done once, usually in postmaster
-		 */
-		Assert(init);
+  if (!found)
+    {
+      /*
+       * Only done once, usually in postmaster
+       */
+      Assert(init);
 
-		/*
-		 * Grab the whole linked list of free buffers for our strategy. We
-		 * assume it was previously set up by InitBufferPool().
-		 */
-		StrategyControl->firstFreeBuffer = 0;
-		StrategyControl->lastFreeBuffer = NBuffers - 1;
+      /*
+       * Grab the whole linked list of free buffers for our strategy. We
+       * assume it was previously set up by InitBufferPool().
+       */
+      StrategyControl->firstFreeBuffer = 0;
+      StrategyControl->lastFreeBuffer = NBuffers - 1;
 
-		/* Initialize the clock sweep pointer */
-		StrategyControl->nextVictimBuffer = 0;
+      /* Initialize the clock sweep pointer */
+      StrategyControl->nextVictimBuffer = 0;
 
-		/* Clear statistics */
-		StrategyControl->completePasses = 0;
-		StrategyControl->numBufferAllocs = 0;
+      /* Clear statistics */
+      StrategyControl->completePasses = 0;
+      StrategyControl->numBufferAllocs = 0;
 
-		/* CS186 TODO: Initialize any data you added to StrategyControlData here */
-	}
-	else
-		Assert(!init);
+      /* CS186 TODO: Initialize any data you added to StrategyControlData here */
+    }
+  else
+    Assert(!init);
 }
 
 
@@ -438,50 +440,50 @@ StrategyInitialize(bool init)
 BufferAccessStrategy
 GetAccessStrategy(BufferAccessStrategyType btype)
 {
-	BufferAccessStrategy strategy;
-	int			ring_size;
+  BufferAccessStrategy strategy;
+  int			ring_size;
 
-	/*
-	 * Select ring size to use.	 See buffer/README for rationales.
-	 *
-	 * Note: if you change the ring size for BAS_BULKREAD, see also
-	 * SYNC_SCAN_REPORT_INTERVAL in access/heap/syncscan.c.
-	 */
-	switch (btype)
-	{
-		case BAS_NORMAL:
-			/* if someone asks for NORMAL, just give 'em a "default" object */
-			return NULL;
+  /*
+   * Select ring size to use.	 See buffer/README for rationales.
+   *
+   * Note: if you change the ring size for BAS_BULKREAD, see also
+   * SYNC_SCAN_REPORT_INTERVAL in access/heap/syncscan.c.
+   */
+  switch (btype)
+    {
+    case BAS_NORMAL:
+      /* if someone asks for NORMAL, just give 'em a "default" object */
+      return NULL;
 
-		case BAS_BULKREAD:
-			ring_size = 256 * 1024 / BLCKSZ;
-			break;
-		case BAS_BULKWRITE:
-			ring_size = 16 * 1024 * 1024 / BLCKSZ;
-			break;
-		case BAS_VACUUM:
-			ring_size = 256 * 1024 / BLCKSZ;
-			break;
+    case BAS_BULKREAD:
+      ring_size = 256 * 1024 / BLCKSZ;
+      break;
+    case BAS_BULKWRITE:
+      ring_size = 16 * 1024 * 1024 / BLCKSZ;
+      break;
+    case BAS_VACUUM:
+      ring_size = 256 * 1024 / BLCKSZ;
+      break;
 
-		default:
-			elog(ERROR, "unrecognized buffer access strategy: %d",
-				 (int) btype);
-			return NULL;		/* keep compiler quiet */
-	}
+    default:
+      elog(ERROR, "unrecognized buffer access strategy: %d",
+	   (int) btype);
+      return NULL;		/* keep compiler quiet */
+    }
 
-	/* Make sure ring isn't an undue fraction of shared buffers */
-	ring_size = Min(NBuffers / 8, ring_size);
+  /* Make sure ring isn't an undue fraction of shared buffers */
+  ring_size = Min(NBuffers / 8, ring_size);
 
-	/* Allocate the object and initialize all elements to zeroes */
-	strategy = (BufferAccessStrategy)
-		palloc0(offsetof(BufferAccessStrategyData, buffers) +
-				ring_size * sizeof(Buffer));
+  /* Allocate the object and initialize all elements to zeroes */
+  strategy = (BufferAccessStrategy)
+    palloc0(offsetof(BufferAccessStrategyData, buffers) +
+	    ring_size * sizeof(Buffer));
 
-	/* Set fields that don't start out zero */
-	strategy->btype = btype;
-	strategy->ring_size = ring_size;
+  /* Set fields that don't start out zero */
+  strategy->btype = btype;
+  strategy->ring_size = ring_size;
 
-	return strategy;
+  return strategy;
 }
 
 /*
@@ -493,9 +495,9 @@ GetAccessStrategy(BufferAccessStrategyType btype)
 void
 FreeAccessStrategy(BufferAccessStrategy strategy)
 {
-	/* don't crash if called on a "default" strategy */
-	if (strategy != NULL)
-		pfree(strategy);
+  /* don't crash if called on a "default" strategy */
+  if (strategy != NULL)
+    pfree(strategy);
 }
 
 /*
@@ -507,49 +509,49 @@ FreeAccessStrategy(BufferAccessStrategy strategy)
 static volatile BufferDesc *
 GetBufferFromRing(BufferAccessStrategy strategy)
 {
-	volatile BufferDesc *buf;
-	Buffer		bufnum;
+  volatile BufferDesc *buf;
+  Buffer		bufnum;
 
-	/* Advance to next ring slot */
-	if (++strategy->current >= strategy->ring_size)
-		strategy->current = 0;
+  /* Advance to next ring slot */
+  if (++strategy->current >= strategy->ring_size)
+    strategy->current = 0;
 
-	/*
-	 * If the slot hasn't been filled yet, tell the caller to allocate a new
-	 * buffer with the normal allocation strategy.	He will then fill this
-	 * slot by calling AddBufferToRing with the new buffer.
-	 */
-	bufnum = strategy->buffers[strategy->current];
-	if (bufnum == InvalidBuffer)
-	{
-		strategy->current_was_in_ring = false;
-		return NULL;
-	}
+  /*
+   * If the slot hasn't been filled yet, tell the caller to allocate a new
+   * buffer with the normal allocation strategy.	He will then fill this
+   * slot by calling AddBufferToRing with the new buffer.
+   */
+  bufnum = strategy->buffers[strategy->current];
+  if (bufnum == InvalidBuffer)
+    {
+      strategy->current_was_in_ring = false;
+      return NULL;
+    }
 
-	/*
-	 * If the buffer is pinned we cannot use it under any circumstances.
-	 *
-	 * If usage_count is 0 or 1 then the buffer is fair game (we expect 1,
-	 * since our own previous usage of the ring element would have left it
-	 * there, but it might've been decremented by clock sweep since then). A
-	 * higher usage_count indicates someone else has touched the buffer, so we
-	 * shouldn't re-use it.
-	 */
-	buf = &BufferDescriptors[bufnum - 1];
-	LockBufHdr(buf);
-	if (buf->refcount == 0 && buf->usage_count <= 1)
-	{
-		strategy->current_was_in_ring = true;
-		return buf;
-	}
-	UnlockBufHdr(buf);
+  /*
+   * If the buffer is pinned we cannot use it under any circumstances.
+   *
+   * If usage_count is 0 or 1 then the buffer is fair game (we expect 1,
+   * since our own previous usage of the ring element would have left it
+   * there, but it might've been decremented by clock sweep since then). A
+   * higher usage_count indicates someone else has touched the buffer, so we
+   * shouldn't re-use it.
+   */
+  buf = &BufferDescriptors[bufnum - 1];
+  LockBufHdr(buf);
+  if (buf->refcount == 0 && buf->usage_count <= 1)
+    {
+      strategy->current_was_in_ring = true;
+      return buf;
+    }
+  UnlockBufHdr(buf);
 
-	/*
-	 * Tell caller to allocate a new buffer with the normal allocation
-	 * strategy.  He'll then replace this ring element via AddBufferToRing.
-	 */
-	strategy->current_was_in_ring = false;
-	return NULL;
+  /*
+   * Tell caller to allocate a new buffer with the normal allocation
+   * strategy.  He'll then replace this ring element via AddBufferToRing.
+   */
+  strategy->current_was_in_ring = false;
+  return NULL;
 }
 
 /*
@@ -561,7 +563,7 @@ GetBufferFromRing(BufferAccessStrategy strategy)
 static void
 AddBufferToRing(BufferAccessStrategy strategy, volatile BufferDesc *buf)
 {
-	strategy->buffers[strategy->current] = BufferDescriptorGetBuffer(buf);
+  strategy->buffers[strategy->current] = BufferDescriptorGetBuffer(buf);
 }
 
 /*
@@ -578,43 +580,43 @@ AddBufferToRing(BufferAccessStrategy strategy, volatile BufferDesc *buf)
 bool
 StrategyRejectBuffer(BufferAccessStrategy strategy, volatile BufferDesc *buf)
 {
-	/* We only do this in bulkread mode */
-	if (strategy->btype != BAS_BULKREAD)
-		return false;
+  /* We only do this in bulkread mode */
+  if (strategy->btype != BAS_BULKREAD)
+    return false;
 
-	/* Don't muck with behavior of normal buffer-replacement strategy */
-	if (!strategy->current_was_in_ring ||
-	  strategy->buffers[strategy->current] != BufferDescriptorGetBuffer(buf))
-		return false;
+  /* Don't muck with behavior of normal buffer-replacement strategy */
+  if (!strategy->current_was_in_ring ||
+      strategy->buffers[strategy->current] != BufferDescriptorGetBuffer(buf))
+    return false;
 
-	/*
-	 * Remove the dirty buffer from the ring; necessary to prevent infinite
-	 * loop if all ring members are dirty.
-	 */
-	strategy->buffers[strategy->current] = InvalidBuffer;
+  /*
+   * Remove the dirty buffer from the ring; necessary to prevent infinite
+   * loop if all ring members are dirty.
+   */
+  strategy->buffers[strategy->current] = InvalidBuffer;
 
-	return true;
+  return true;
 }
 
 const char *
 get_buffer_policy_str(PolicyKind policy)
 {
-	switch (policy)
-	{
-		case POLICY_CLOCK:
-			return "clock";
+  switch (policy)
+    {
+    case POLICY_CLOCK:
+      return "clock";
 
-		case POLICY_LRU:
-			return "lru";
+    case POLICY_LRU:
+      return "lru";
 
-		case POLICY_MRU:
-			return "mru";
+    case POLICY_MRU:
+      return "mru";
 
-		case POLICY_2Q:
-			return "2q";
+    case POLICY_2Q:
+      return "2q";
 
-		default:
-			elog(ERROR, "invalid replacement policy: %d", policy);
-			return "unknown";
-	}
+    default:
+      elog(ERROR, "invalid replacement policy: %d", policy);
+      return "unknown";
+    }
 }
