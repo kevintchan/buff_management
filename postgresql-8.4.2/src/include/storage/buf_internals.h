@@ -148,6 +148,13 @@ typedef struct sbufdesc
   * your buffer replacement strategies here.
   */
 
+  /* 
+   * KCHAN: these should all be protected by their own locks but
+   * we will leverage BufFreelistLock
+   */
+  int nextBuf; /* link in buffer replacement data structures */
+  int prevBuf; /* link in buffer placement data strucutres */
+
 } BufferDesc;
 
 #define BufferDescriptorGetBuffer(bdesc) ((bdesc)->buf_id + 1)
@@ -158,6 +165,9 @@ typedef struct sbufdesc
  */
 #define FREENEXT_END_OF_LIST (-1)
 #define FREENEXT_NOT_IN_LIST (-2)
+
+#define END_OF_LIST (-1)
+#define NOT_IN_LIST (-2)
 
 /*
  * Macros for acquiring/releasing a shared buffer header's spinlock.

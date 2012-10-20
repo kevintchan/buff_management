@@ -57,6 +57,24 @@ typedef struct
    * your buffer replacement strategies here.
    */
 
+  /* 
+   * KCHAN: these should all be protected by their own locks but
+   * we will leverage BufFreelistLock
+   */
+  
+  // for Q2, A1, FIFO Queue
+  int firstFIFOBuffer;
+  int lastFIFOBuffer;
+  int fifoSize;
+
+  // for Q2, AM, LRU Queue
+  int firstLRUBuffer;
+  int lastLRUBuffer;
+  
+  // for MRU Queue
+  int firstMRUBuffer;
+  int lastMRUBuffer;
+
 } BufferStrategyControl;
 
 /* Pointers to shared state */
@@ -100,6 +118,7 @@ typedef struct BufferAccessStrategyData
 static volatile BufferDesc *GetBufferFromRing(BufferAccessStrategy strategy);
 static void AddBufferToRing(BufferAccessStrategy strategy,
 			    volatile BufferDesc *buf);
+static int getUnpinnedBufIdxFromLinkedList(int listStartIdx);
 
 
 /*
@@ -120,13 +139,6 @@ static void AddBufferToRing(BufferAccessStrategy strategy,
  *	kernel calls while holding the buffer header spinlock.
  */
 
-/*
- * CS186 TODO: Add code here to implement the LRU, MRU and 2Q buffer
- * replacement policies. Once you've selected a buffer to
- * evict, assign its index in the BufferDescriptors array to
- * "resultIndex". You can model your code on the CLOCK code
- * above.
- */
 
 volatile BufferDesc *
 StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
@@ -183,7 +195,17 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
    * to select a buffer to evict.
    */
   if (resultIndex == -1) {
+
+    /*
+     * CS186 TODO: Add code here to implement the LRU, MRU and 2Q buffer
+     * replacement policies. Once you've selected a buffer to
+     * evict, assign its index in the BufferDescriptors array to
+     * "resultIndex". You can model your code on the CLOCK code
+     * above.
+     */
+
     if (BufferReplacementPolicy == POLICY_CLOCK) {
+
       /* Run the "clock sweep" algorithm */
       trycounter = NBuffers;
       for (;;) {
@@ -227,36 +249,41 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
 	UnlockBufHdr(buf);
       }
     } else if (BufferReplacementPolicy == POLICY_LRU) {
-      elog(ERROR, "LRU unimplemented");
+
+      resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->firstLRUBuffer);
 
     } else if (BufferReplacementPolicy == POLICY_MRU) {
-      elog(ERROR, "MRU unimplemented");
+
+      resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->firstMRUBuffer);
 
     } else if (BufferReplacementPolicy == POLICY_2Q) {
-      // KCHAN
-      // A1 FIFO queue
-      // A1 queue.size
 
-      // AM LRU queue
-      // AM queue.size
-      /*      int THRESHOLD = floor(NBuffers/2);
+      /* 2Q POLICY IMPLEMENTATION */
 
-      if (a1_queue->size > THRESHOLD) {
-	resultIndex = pop(a1_queue);
-      } else {
-	resultIndex = pop(am_queue);
+      const int threshold = floor(NBuffers/2);
+      if (StrategyControl->fifoSize >=  threshold) {
+	// pull from A1(FIFO) if its above the threshold
+	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->firstFIFOBuffer);
       }
-      */
-	  
-      elog(ERROR, "2Q unimplemented");
+
+      if (resultIndex == END_OF_LIST) {
+	// pull from AM(LRU)
+	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->firstLRUBuffer);
+      }
+
+      if (resultIndex == END_OF_LIST) {
+	// pull from A1(FIFO) again
+	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->firstFIFOBuffer);
+      }
+
     } else  {
       elog(ERROR, "invalid buffer pool replacement policy %d", BufferReplacementPolicy);
     }
 
-    
     /*
      * CS186 Grading LOG - DON'T TOUCH
-     * Don't output logs starting with "GRADING" by yourself; they are for grading purposes only.
+     * Don't output logs starting with "GRADING" by yourself;
+     * they are for grading purposes only.
      */
     elog(LOG, "GRADING: EVICT %2d", resultIndex);  
   }
@@ -265,6 +292,29 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
     elog(ERROR, "reached end of StrategyGetBuffer() without selecting a buffer");
 	
   return &BufferDescriptors[resultIndex];
+}
+
+/*
+ * KCHAN: returns index of first unpinned buffer in the FIFO queue
+ *        while also holding its header spinlock
+ */
+int
+getUnpinnedBufIdxFromLinkedList(int firstFifoBufferIdx)
+{
+  volatile int bufIndex = firstFifoBufferIdx;
+  volatile BufferDesc *buf;
+  while (bufIndex != END_OF_LIST) {
+    buf = &BufferDescriptors[bufIndex];
+
+    LockBufHdr(buf);
+    if (buf->refcount == 0) {
+      return bufIndex;
+    }
+    UnlockBufHdr(buf);
+
+    bufIndex = buf->nextBuf;
+  }
+  return END_OF_LIST;
 }
 
 /*
@@ -420,6 +470,29 @@ StrategyInitialize(bool init)
       StrategyControl->numBufferAllocs = 0;
 
       /* CS186 TODO: Initialize any data you added to StrategyControlData here */
+
+      /* KCHAN INIT CHANGES */
+
+      // initialize pointer to nextBuf and prevBuf
+      volatile BufferDesc *buf;
+      int i;
+      for (i = 0; i < NBuffers; i++) {
+	buf = &BufferDescriptors[i];
+	buf->nextBuf = NOT_IN_LIST;
+	buf->prevBuf = NOT_IN_LIST;
+      }
+
+      // initialize first/last of LRU, MRU, Q2 LinkedLists
+      // we could switch on Strategy
+
+      StrategyControl->firstFIFOBuffer = END_OF_LIST;
+      StrategyControl->lastFIFOBuffer = END_OF_LIST;
+
+      StrategyControl->firstLRUBuffer = END_OF_LIST;
+      StrategyControl->lastLRUBuffer = END_OF_LIST;
+      
+      StrategyControl->firstMRUBuffer = END_OF_LIST;
+      StrategyControl->lastMRUBuffer = END_OF_LIST;
     }
   else
     Assert(!init);
