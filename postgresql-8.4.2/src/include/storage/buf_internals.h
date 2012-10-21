@@ -169,6 +169,7 @@ typedef struct sbufdesc
 
 #define END_OF_LIST (-1)
 #define NOT_IN_LIST (-2)
+#define BEGIN_OF_LIST (-3)
 
 /*
  * Macros for acquiring/releasing a shared buffer header's spinlock.

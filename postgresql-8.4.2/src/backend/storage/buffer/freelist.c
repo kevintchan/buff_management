@@ -125,10 +125,10 @@ static void AddBufferToRing(BufferAccessStrategy strategy,
 			    volatile BufferDesc *buf);
 static int getUnpinnedBufIdxFromLinkedList(int listStartIdx);
 
-static void updateListFIFO(int leastRecentlyUsedIdx);
-static void updateListLRU(int leastRecentlyUsedIdx);
-static void updateListMRU(int leastRecentlyUsedIdx);
-
+static void removeFromQueue(int idx);
+static void addToQueueMainHEAD(int idx);
+static void addToQueueMainTAIL(int idx);
+static void addToQueueFIFO(int idx);
 
 /*
  * StrategyGetBuffer
@@ -324,47 +324,111 @@ int getUnpinnedBufIdxFromLinkedList(int headBufIdx)
   return END_OF_LIST;
 }
 
-// RSU
-void removeFromList(int ind)
+/*
+ * KCHAN: removes from any queue independent of whether it is FIFO or MAIN
+ */ 
+void removeFromQueue(int ind)
 {
-  to_remove = BufferDescriptors[ind];
-  next = to_remove->nextBuf;
-  prev = to_remove->prevBuf;
-  BufferDescriptors[prev]->nextBuf = next;
-  BufferDescriptors[next]->prevBuf = prev;
-  if (ind == StrategyControl->headBufIdx)
-  {
-    StrategyControl->headBufIdx = next;
+  BufferDesc *to_remove = &BufferDescriptors[ind];
+  int next = to_remove->nextBuf;
+  int prev = to_remove->prevBuf;
+
+  // we could throw an error here, but just try to correct the mistake
+  if (next == NOT_IN_LIST || prev == NOT_IN_LIST) {
+    to_remove->nextBuf = NOT_IN_LIST;
+    to_remove->prevBuf = NOT_IN_LIST;
+    return;
   }
-  else if (ind == StrategyControl->tailBufIdx)
-  {
-    StrategyControl->tailBufIdx = prev;
+
+  // check for END_OF_LIST
+  if (next == END_OF_LIST) {
+    if (StrategyControl->tailBufIdx == ind) {
+      StrategyControl->tailBufIdxFIFO = prev;
+    }
+    if (StrategyControl->tailBufIdxFIFO == ind) {
+      StrategyControl->tailBufIdxFIFO = prev;
+    }
+  } else {
+    BufferDesc *next_buffer = &BufferDescriptors[next];
+    next_buffer->prevBuf = prev;
+  }
+
+  // check for BEGIN_OF_LIST
+  if (prev == BEGIN_OF_LIST) {
+    // determine which list
+    if (StrategyControl->headBufIdx == ind) {
+      StrategyControl->headBufIdx = next;
+    }
+    if (StrategyControl->headBufIdxFIFO == ind) {
+      StrategyControl->headBufIdxFIFO = next;
+    }
+  } else {
+    BufferDesc *prev_buffer = &BufferDescriptors[prev];
+    prev_buffer->nextBuf = next;
   }
 }
 
-void addToList(int ind)
-{
-  last = BufferDescriptors[StrategyControl->tailBufIdx];
-  last->nextBuf = ind;
-  BufferDescriptors[ind]->prevBuf = StrategyControl->tailBufIdx;
-  StrategyControl->tailBuffIdx = ind;
-}
-
-void updateListFIFO(int mostRecentlyUsedIdx)
-{
-
-
-}
-
-
-/* 
- * given the index of the most recently used buffer, removes it from the list
- * and readds it at the end. to be used in both MRU and LRU
+/*
+ * KCHAN: append a buffer to the end of the queue; used for LRU
  */
-void updateList(int mostRecentlyUsedIdx)
+void addToQueueMainTAIL(int idx)
 {
-  removeFromQ(mostRecentlyUsedIdx);
-  addToQ(mostRecentlyUsedIdx);
+  BufferDesc *to_append = &BufferDescriptors[idx];
+
+  int tailIdx = StrategyControl->tailBufIdx;
+  if (BEGIN_OF_LIST == tailIdx) {
+    StrategyControl->headBufIdx = idx;
+    to_append->prevBuf = BEGIN_OF_LIST;
+  } else {
+    BufferDesc *tail = &BufferDescriptors[tailIdx];
+    tail->nextBuf = idx;
+    to_append->prevBuf = tailIdx;
+  }
+
+  to_append->nextBuf = END_OF_LIST;
+  StrategyControl->tailBufIdx = idx;
+}
+
+/*
+ * KCHAN: append a buffer to the end of the queue; used for MRU
+ */
+void addToQueueMainHEAD(int idx)
+{
+  BufferDesc *to_append = &BufferDescriptors[idx];
+
+  int headIdx = StrategyControl->headBufIdx;
+  if (END_OF_LIST == headIdx) {
+    StrategyControl->tailBufIdx = idx;
+    to_append->nextBuf = END_OF_LIST;
+  } else {
+    BufferDesc *head = &BufferDescriptors[headIdx];
+    head->prevBuf = idx;
+    to_append->nextBuf = headIdx;
+  }
+
+  to_append->prevBuf = BEGIN_OF_LIST;
+  StrategyControl->headBufIdx = idx;
+}
+
+/*
+ * KCHAN: identical to the above except for the StrategyControl ptrs
+ */
+void addToQueueFIFO(int idx)
+{
+  BufferDesc *to_append = &BufferDescriptors[idx];
+
+  int tailIdx = StrategyControl->tailBufIdxFIFO;
+  if (BEGIN_OF_LIST == tailIdx) {
+    StrategyControl->headBufIdxFIFO = idx;
+    to_append->prevBuf = BEGIN_OF_LIST;
+  } else {
+    BufferDesc *tail = &BufferDescriptors[tailIdx];
+    tail->nextBuf = idx;
+    to_append->prevBuf = tailIdx;
+  }
+
+  to_append->nextBuf = END_OF_LIST;
+  StrategyControl->tailBufIdxFIFO = idx;
 }
 
 
@@ -372,8 +436,7 @@ void updateList(int mostRecentlyUsedIdx)
  * CS186: Called when the specified buffer is unpinned and becomes
  * available for replacement. 
  */
-void
-BufferUnpinned(int bufIndex)
+void BufferUnpinned(int bufIndex)
 {
   volatile BufferDesc *buf = &BufferDescriptors[bufIndex];
 
@@ -389,31 +452,32 @@ BufferUnpinned(int bufIndex)
    */
 
   // determine if already exists in a list using NOT_IN_LIST
-  const boolean inList = buf->nextBuf == NOT_IN_LIST;
+  const bool inList = buf->nextBuf == NOT_IN_LIST;
   
   if (BufferReplacementPolicy == POLICY_CLOCK) {
     // do nothing
   } else if (BufferReplacementPolicy == POLICY_LRU) {
-    if (!inList) {
-      addLRU(bufIndex);
-    } else {
-      updateLRU(bufIndex);
+
+    if (inList) {
+      removeFromQueue(bufIndex);
     }
+    addToQueueMainTAIL(bufIndex);
+
   } else if (BufferReplacementPolicy == POLICY_MRU) {
-    if (!inList) {
-      addLRU(bufIndex);
-    } else {
-      updateLRU(bufIndex);
+
+    if (inList) {
+      removeFromQueue(bufIndex);
     }
+    addToQueueMainHEAD(bufIndex);
+
   } else if (BufferReplacementPolicy == POLICY_2Q) {
     if (!inList) {
-      addFIFO(bufIndex);
+      addToQueueFIFO(bufIndex);
     } else {
-      // remove from queue, put in LRU
-      removeFromList(bufIndex);
-      addLRU(bufIndex);
+      // remove from whichever queue, put in LRU
+      removeFromQueue(bufIndex);
+      addToQueueMainTAIL(bufIndex);
     }
-
   } else {
     elog(ERROR, "invalid buffer pool replacement policy %d", BufferReplacementPolicy);
   }
@@ -567,16 +631,10 @@ StrategyInitialize(bool init)
       // we could switch on Strategy
 
       StrategyControl->headBufIdxFIFO = END_OF_LIST;
-      StrategyControl->tailBufIdxFIFO = END_OF_LIST;
-
-      StrategyControl->headBufIdxLRU = END_OF_LIST;
-      StrategyControl->tailBufIdxLRU = END_OF_LIST;
-
-      StrategyControl->headBufIdxMRU = END_OF_LIST;
-      StrategyControl->tailBufIdxMRU = END_OF_LIST;
+      StrategyControl->tailBufIdxFIFO = BEGIN_OF_LIST;
 
       StrategyControl->headBufIdx = END_OF_LIST;
-      StrategyControl->tailBufIdx = END_OF_LIST;
+      StrategyControl->tailBufIdx = BEGIN_OF_LIST;
 
     }
   else
