@@ -75,6 +75,12 @@ typedef struct
   int headBufIdxMRU;
   int tailBufIdxMRU;
 
+  /*
+   * RSU: added these b/c don't want to delete your stuff in case you still need it
+   */
+  int headBufIdx;
+  int tailBufIdx;
+
 } BufferStrategyControl;
 
 /* Pointers to shared state */
@@ -90,8 +96,7 @@ typedef struct BufferAccessStrategyData
   /* Overall strategy type */
   BufferAccessStrategyType btype;
   /* Number of elements in buffers[] array */
-  int ring_size;
-
+  int ring_size; 
   /*
    * Index of the "current" slot in the ring, ie, the one most recently
    * returned by GetBufferFromRing.
@@ -319,40 +324,47 @@ int getUnpinnedBufIdxFromLinkedList(int headBufIdx)
   return END_OF_LIST;
 }
 
-
-void addFIFO(int bufIdx)
+// RSU
+void removeFromList(int ind)
 {
+  to_remove = BufferDescriptors[ind];
+  next = to_remove->nextBuf;
+  prev = to_remove->prevBuf;
+  BufferDescriptors[prev]->nextBuf = next;
+  BufferDescriptors[next]->prevBuf = prev;
+  if (ind == StrategyControl->headBufIdx)
+  {
+    StrategyControl->headBufIdx = next;
+  }
+  else if (ind == StrategyControl->tailBufIdx)
+  {
+    StrategyControl->tailBufIdx = prev;
+  }
+}
+
+void addToList(int ind)
+{
+  last = BufferDescriptors[StrategyControl->tailBufIdx];
+  last->nextBuf = ind;
+  BufferDescriptors[ind]->prevBuf = StrategyControl->tailBufIdx;
+  StrategyControl->tailBuffIdx = ind;
+}
+
+void updateListFIFO(int mostRecentlyUsedIdx)
+{
+
 
 }
 
-void addLRU(int bufIdx)
+
+/* 
+ * given the index of the most recently used buffer, removes it from the list
+ * and readds it at the end. to be used in both MRU and LRU
+ */
+void updateList(int mostRecentlyUsedIdx)
 {
-
-}
-
-void addMRU(int bufIdx)
-{
-
-}
-
-
-void updateListFIFO(int leastRecentlyUsedIdx)
-{
-
-
-}
-
-void updateListLRU(int leastRecentlyUsedIdx)
-{
-
-
-
-}
-
-void updateListMRU(int leastRecentlyUsedIdx)
-{
-
-
+  removeFromQ(mostRecentlyUsedIdx);
+  addToQ(mostRecentlyUsedIdx);
 }
 
 
@@ -562,6 +574,9 @@ StrategyInitialize(bool init)
 
       StrategyControl->headBufIdxMRU = END_OF_LIST;
       StrategyControl->tailBufIdxMRU = END_OF_LIST;
+
+      StrategyControl->headBufIdx = END_OF_LIST;
+      StrategyControl->tailBufIdx = END_OF_LIST;
 
     }
   else
