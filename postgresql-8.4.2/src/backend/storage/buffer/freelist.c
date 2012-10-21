@@ -319,6 +319,23 @@ int getUnpinnedBufIdxFromLinkedList(int headBufIdx)
   return END_OF_LIST;
 }
 
+
+void addFIFO(int bufIdx)
+{
+
+}
+
+void addLRU(int bufIdx)
+{
+
+}
+
+void addMRU(int bufIdx)
+{
+
+}
+
+
 void updateListFIFO(int leastRecentlyUsedIdx)
 {
 
@@ -332,12 +349,12 @@ void updateListLRU(int leastRecentlyUsedIdx)
 
 }
 
-void
-updateListMRU(int leastRecentlyUsedIdx)
+void updateListMRU(int leastRecentlyUsedIdx)
 {
 
 
 }
+
 
 /*
  * CS186: Called when the specified buffer is unpinned and becomes
@@ -359,7 +376,35 @@ BufferUnpinned(int bufIndex)
    * This function was added by the GSIs.
    */
 
+  // determine if already exists in a list using NOT_IN_LIST
+  const boolean inList = buf->nextBuf == NOT_IN_LIST;
   
+  if (BufferReplacementPolicy == POLICY_CLOCK) {
+    // do nothing
+  } else if (BufferReplacementPolicy == POLICY_LRU) {
+    if (!inList) {
+      addLRU(bufIndex);
+    } else {
+      updateLRU(bufIndex);
+    }
+  } else if (BufferReplacementPolicy == POLICY_MRU) {
+    if (!inList) {
+      addLRU(bufIndex);
+    } else {
+      updateLRU(bufIndex);
+    }
+  } else if (BufferReplacementPolicy == POLICY_2Q) {
+    if (!inList) {
+      addFIFO(bufIndex);
+    } else {
+      // remove from queue, put in LRU
+      removeFromList(bufIndex);
+      addLRU(bufIndex);
+    }
+
+  } else {
+    elog(ERROR, "invalid buffer pool replacement policy %d", BufferReplacementPolicy);
+  }
 
   LWLockRelease(BufFreelistLock);
 }
