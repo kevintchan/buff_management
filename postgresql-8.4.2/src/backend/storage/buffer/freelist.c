@@ -209,44 +209,44 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
       /* Run the "clock sweep" algorithm */
       trycounter = NBuffers;
       for (;;) {
-	bufIndex = StrategyControl->nextVictimBuffer;
-	buf = &BufferDescriptors[bufIndex];
+	      bufIndex = StrategyControl->nextVictimBuffer;
+	      buf = &BufferDescriptors[bufIndex];
 
-	/*
-	 * If the clock sweep hand has reached the end of the
-	 * buffer pool, start back at the beginning.
-	 */
-	if (++StrategyControl->nextVictimBuffer >= NBuffers) {
-	  StrategyControl->nextVictimBuffer = 0;
-	  StrategyControl->completePasses++;
-	}
+	      /*
+	       * If the clock sweep hand has reached the end of the
+	       * buffer pool, start back at the beginning.
+	       */
+	      if (++StrategyControl->nextVictimBuffer >= NBuffers) {
+	        StrategyControl->nextVictimBuffer = 0;
+	        StrategyControl->completePasses++;
+	      }
 
-	/*
-	 * If the buffer is pinned or has a nonzero usage_count, we cannot use
-	 * it; decrement the usage_count (unless pinned) and keep scanning.
-	 */
-	LockBufHdr(buf);
-	if (buf->refcount == 0) {
-	  if (buf->usage_count > 0) {
-	    buf->usage_count--;
-	    trycounter = NBuffers;
-	  } else {
-	    /* Found a usable buffer */
-	    resultIndex = bufIndex;
-	    break;
-	  }
-	} else if (--trycounter == 0) {
-	  /*
-	   * We've scanned all the buffers without making any state changes,
-	   * so all the buffers are pinned (or were when we looked at them).
-	   * We could hope that someone will free one eventually, but it's
-	   * probably better to fail than to risk getting stuck in an
-	   * infinite loop.
-	   */
-	  UnlockBufHdr(buf);
-	  elog(ERROR, "no unpinned buffers available");
-	}
-	UnlockBufHdr(buf);
+	      /*
+	       * If the buffer is pinned or has a nonzero usage_count, we cannot use
+	       * it; decrement the usage_count (unless pinned) and keep scanning.
+	       */
+	      LockBufHdr(buf);
+	      if (buf->refcount == 0) {
+	        if (buf->usage_count > 0) {
+	          buf->usage_count--;
+	          trycounter = NBuffers;
+	        } else {
+	          /* Found a usable buffer */
+	          resultIndex = bufIndex;
+	          break;
+	        }
+	      } else if (--trycounter == 0) {
+	        /*
+	         * We've scanned all the buffers without making any state changes,
+	         * so all the buffers are pinned (or were when we looked at them).
+	         * We could hope that someone will free one eventually, but it's
+	         * probably better to fail than to risk getting stuck in an
+	         * infinite loop.
+	         */
+	        UnlockBufHdr(buf);
+	        elog(ERROR, "no unpinned buffers available");
+	      }
+	      UnlockBufHdr(buf);
       }
     } else if (BufferReplacementPolicy == POLICY_LRU) {
 
@@ -444,7 +444,7 @@ void BufferUnpinned(int bufIndex)
    */
 
   // determine if already exists in a list using NOT_IN_LIST
-  const bool inList = buf->nextBuf == NOT_IN_LIST;
+  const bool inList = buf->nextBuf != NOT_IN_LIST;
   
   if (BufferReplacementPolicy == POLICY_CLOCK) {
     // do nothing
@@ -471,11 +471,11 @@ void BufferUnpinned(int bufIndex)
       int lastIndex = bufIndex;
       BufferDesc *lastBuf = &BufferDescriptors[lastIndex];
       while (lastBuf->nextBuf != END_OF_LIST) {
-	lastIndex = lastBuf->nextBuf;
-	lastBuf = &BufferDescriptors[lastIndex];
+	      lastIndex = lastBuf->nextBuf;
+	      lastBuf = &BufferDescriptors[lastIndex];
       }
       if (lastIndex == StrategyControl->tailBufIdxFIFO) {
-	StrategyControl->fifoSize--;
+	      StrategyControl->fifoSize--;
       }
       
       // remove from whichever queue, put in LRU
