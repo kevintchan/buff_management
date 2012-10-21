@@ -67,14 +67,6 @@ typedef struct
   int tailBufIdxFIFO;
   int fifoSize;
 
-  // for Q2, AM, LRU Queue
-  int headBufIdxLRU;
-  int tailBufIdxLRU;
-
-  // for MRU Queue
-  int headBufIdxMRU;
-  int tailBufIdxMRU;
-
   /*
    * RSU: added these b/c don't want to delete your stuff in case you still need it
    */
@@ -258,11 +250,11 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
       }
     } else if (BufferReplacementPolicy == POLICY_LRU) {
 
-      resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdxLRU);
+      resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdx);
 
     } else if (BufferReplacementPolicy == POLICY_MRU) {
 
-      resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdxMRU);
+      resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdx);
 
     } else if (BufferReplacementPolicy == POLICY_2Q) {
 
@@ -276,7 +268,7 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
 
       if (resultIndex == END_OF_LIST) {
 	// pull from AM(LRU)
-	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdxLRU);
+	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdx);
       }
 
       if (resultIndex == END_OF_LIST) {
@@ -473,7 +465,19 @@ void BufferUnpinned(int bufIndex)
   } else if (BufferReplacementPolicy == POLICY_2Q) {
     if (!inList) {
       addToQueueFIFO(bufIndex);
+      StrategyControl->fifoSize++;
     } else {
+      // if from FIFO queue, decrement fifoSize
+      int lastIndex = bufIndex;
+      BufferDesc *lastBuf = &BufferDescriptors[lastIndex];
+      while (lastBuf->nextBuf != END_OF_LIST) {
+	lastIndex = lastBuf->nextBuf;
+	lastBuf = &BufferDescriptors[lastIndex];
+      }
+      if (lastIndex == StrategyControl->tailBufIdxFIFO) {
+	StrategyControl->fifoSize--;
+      }
+      
       // remove from whichever queue, put in LRU
       removeFromQueue(bufIndex);
       addToQueueMainTAIL(bufIndex);
