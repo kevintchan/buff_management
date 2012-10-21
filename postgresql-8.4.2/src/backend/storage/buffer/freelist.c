@@ -335,7 +335,7 @@ void removeFromQueue(int ind)
   // check for END_OF_LIST
   if (next == END_OF_LIST) {
     if (StrategyControl->tailBufIdx == ind) {
-      StrategyControl->tailBufIdxFIFO = prev;
+      StrategyControl->tailBufIdx = prev;
     }
     if (StrategyControl->tailBufIdxFIFO == ind) {
       StrategyControl->tailBufIdxFIFO = prev;
