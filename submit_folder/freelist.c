@@ -67,9 +67,6 @@ typedef struct
   int tailBufIdxFIFO;
   int fifoSize;
 
-  /*
-   * RSU: added these b/c don't want to delete your stuff in case you still need it
-   */
   int headBufIdx;
   int tailBufIdx;
 
@@ -260,10 +257,13 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
 
       /* 2Q POLICY IMPLEMENTATION */
 
-      const int threshold = floor(NBuffers/2);
+      const int threshold = NBuffers/2;
       if (StrategyControl->fifoSize >=  threshold) {
 	// pull from A1(FIFO) if its above the threshold
 	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdxFIFO);
+	if (resultIndex != END_OF_LIST) {
+	  StrategyControl->fifoSize--;
+	}
       }
 
       if (resultIndex == END_OF_LIST) {
@@ -274,6 +274,9 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
       if (resultIndex == END_OF_LIST) {
 	// pull from A1(FIFO) again
 	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdxFIFO);
+	if (resultIndex != END_OF_LIST) {
+	  StrategyControl->fifoSize--;
+	}
       }
 
     } else  {
@@ -325,10 +328,11 @@ void removeFromQueue(int ind)
   int next = to_remove->nextBuf;
   int prev = to_remove->prevBuf;
 
+  to_remove->nextBuf = NOT_IN_LIST;
+  to_remove->prevBuf = NOT_IN_LIST;
+
   // we could throw an error here, but just try to correct the mistake
   if (next == NOT_IN_LIST || prev == NOT_IN_LIST) {
-    to_remove->nextBuf = NOT_IN_LIST;
-    to_remove->prevBuf = NOT_IN_LIST;
     return;
   }
 
@@ -468,6 +472,7 @@ void BufferUnpinned(int bufIndex)
       StrategyControl->fifoSize++;
     } else {
       // if from FIFO queue, decrement fifoSize
+      /*
       int lastIndex = bufIndex;
       BufferDesc *lastBuf = &BufferDescriptors[lastIndex];
       while (lastBuf->nextBuf != END_OF_LIST) {
@@ -477,6 +482,7 @@ void BufferUnpinned(int bufIndex)
       if (lastIndex == StrategyControl->tailBufIdxFIFO) {
 	      StrategyControl->fifoSize--;
       }
+      */
       
       // remove from whichever queue, put in LRU
       removeFromQueue(bufIndex);
@@ -639,6 +645,9 @@ StrategyInitialize(bool init)
 
       StrategyControl->headBufIdx = END_OF_LIST;
       StrategyControl->tailBufIdx = BEGIN_OF_LIST;
+
+      StrategyControl->fifoSize = 0;
+      
 
     }
   else
