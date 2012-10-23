@@ -155,6 +155,7 @@ typedef struct sbufdesc
    */
   int nextBuf; /* link in buffer replacement data structures */
   int prevBuf; /* link in buffer placement data strucutres */
+  int queue; /* for determining which queue a buffer is in for 2Q */
 
 } BufferDesc;
 
@@ -170,6 +171,10 @@ typedef struct sbufdesc
 #define END_OF_LIST (-1)
 #define NOT_IN_LIST (-2)
 #define BEGIN_OF_LIST (-3)
+
+#define NO_QUEUE (0)
+#define QUEUE_FIFO (1)
+#define QUEUE_LRU (2)
 
 /*
  * Macros for acquiring/releasing a shared buffer header's spinlock.

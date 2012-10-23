@@ -65,7 +65,6 @@ typedef struct
   // for Q2, A1, FIFO Queue
   int headBufIdxFIFO;
   int tailBufIdxFIFO;
-  int fifoSize;
 
   int headBufIdx;
   int tailBufIdx;
@@ -118,6 +117,7 @@ static void removeFromQueue(int idx);
 static void addToQueueMainHEAD(int idx);
 static void addToQueueMainTAIL(int idx);
 static void addToQueueFIFO(int idx);
+static int listLength(int headIdx);
 
 /*
  * StrategyGetBuffer
@@ -258,12 +258,11 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
       /* 2Q POLICY IMPLEMENTATION */
 
       const int threshold = NBuffers/2;
-      if (StrategyControl->fifoSize >=  threshold) {
+      const int fifoSize = listLength(StrategyControl->headBufIdxFIFO);
+
+      if (fifoSize >= threshold) {
 	// pull from A1(FIFO) if its above the threshold
 	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdxFIFO);
-	if (resultIndex != END_OF_LIST) {
-	  StrategyControl->fifoSize--;
-	}
       }
 
       if (resultIndex == END_OF_LIST) {
@@ -274,9 +273,12 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
       if (resultIndex == END_OF_LIST) {
 	// pull from A1(FIFO) again
 	resultIndex = getUnpinnedBufIdxFromLinkedList(StrategyControl->headBufIdxFIFO);
-	if (resultIndex != END_OF_LIST) {
-	  StrategyControl->fifoSize--;
-	}
+      }
+
+      // remove from any queue because this is a new reference
+      if (resultIndex != END_OF_LIST) {
+	BufferDesc *tmpBuf = &BufferDescriptors[resultIndex];
+	tmpBuf->queue = NO_QUEUE;
       }
 
     } else  {
@@ -295,6 +297,23 @@ StrategyGetBuffer(BufferAccessStrategy strategy, bool *lock_held)
     elog(ERROR, "reached end of StrategyGetBuffer() without selecting a buffer");
 	
   return &BufferDescriptors[resultIndex];
+}
+
+/*
+ * KCHAN: returns length of list of buffers in a queue, does not check ref_count
+ */
+
+int listLength(int headBufIdx)
+{
+  int len = 0;
+  volatile int bufIndex = headBufIdx;
+  volatile BufferDesc *buf;
+  while (bufIndex != END_OF_LIST) {
+    buf = &BufferDescriptors[bufIndex];
+    len++;
+    bufIndex = buf->nextBuf;
+  }
+  return len;
 }
 
 /*
@@ -467,25 +486,12 @@ void BufferUnpinned(int bufIndex)
     addToQueueMainHEAD(bufIndex);
 
   } else if (BufferReplacementPolicy == POLICY_2Q) {
-    if (!inList) {
-      addToQueueFIFO(bufIndex);
-      StrategyControl->fifoSize++;
+    removeFromQueue(bufIndex);
+    if (buf->queue == NO_QUEUE) {
+      buf->queue = QUEUE_FIFO;
+      addToQueueFIFO(bufIndex); 
     } else {
-      // if from FIFO queue, decrement fifoSize
-      /*
-      int lastIndex = bufIndex;
-      BufferDesc *lastBuf = &BufferDescriptors[lastIndex];
-      while (lastBuf->nextBuf != END_OF_LIST) {
-	      lastIndex = lastBuf->nextBuf;
-	      lastBuf = &BufferDescriptors[lastIndex];
-      }
-      if (lastIndex == StrategyControl->tailBufIdxFIFO) {
-	      StrategyControl->fifoSize--;
-      }
-      */
-      
-      // remove from whichever queue, put in LRU
-      removeFromQueue(bufIndex);
+      buf->queue = QUEUE_LRU;
       addToQueueMainTAIL(bufIndex);
     }
   } else {
@@ -635,6 +641,7 @@ StrategyInitialize(bool init)
 	buf = &BufferDescriptors[i];
 	buf->nextBuf = NOT_IN_LIST;
 	buf->prevBuf = NOT_IN_LIST;
+	buf->queue = NO_QUEUE;
       }
 
       // initialize first/last of LRU, MRU, Q2 LinkedLists
@@ -645,10 +652,6 @@ StrategyInitialize(bool init)
 
       StrategyControl->headBufIdx = END_OF_LIST;
       StrategyControl->tailBufIdx = BEGIN_OF_LIST;
-
-      StrategyControl->fifoSize = 0;
-      
-
     }
   else
     Assert(!init);
